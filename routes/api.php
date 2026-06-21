@@ -16,7 +16,7 @@ Route::post('/login',    [AuthController::class, 'login']);
 
 
 //admin
-Route::get('/sendNotificationToAll',    [AdminController::class, 'sendNotificationToAll']);
+Route::get('/sendNotificationToAll',    [AdminController::class, 'sendNotificationToAll'])->middleware('Performance');
 
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -44,3 +44,15 @@ Route::get('/process-sequential', [OrderController::class, 'processSequentially'
 
 Route::post('/protected-checkout', [OrderController::class, 'protectedCheckout']);
 Route::post('/unprotected-checkout', [OrderController::class, 'unprotectedCheckout']);
+
+
+Route::post('/test', function () {
+    return response()->json([
+        'status' => 'ok'
+    ]);
+});
+
+
+Route::post('/orders/place/{mode?}', [ProductController::class, 'placeOrder'])->middleware('log.concurrency');
+Route::get('/products/most-requested', [ProductController::class, 'getMostRequestedProducts']);
+Route::post('/transaction-demo', [OrderController::class, 'transactionDemo']);

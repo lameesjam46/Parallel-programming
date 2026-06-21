@@ -8,10 +8,6 @@ use Illuminate\Http\Request;
 
 class AdminController extends Controller
 {
-
-
-
-
 public function sendNotificationToAll(Request $request)
 {
     $users = User::all();

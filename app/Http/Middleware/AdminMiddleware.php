@@ -14,7 +14,6 @@ class AdminMiddleware
     {
         $user = Auth::user();
 
-        // ❗ تحقق من تسجيل الدخول + الأدمن
         if (!$user || $user->role !== 'admin') {
             return response()->json([
                 'status' => false,

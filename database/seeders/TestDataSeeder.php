@@ -41,7 +41,6 @@ class TestDataSeeder extends Seeder
                 ['quantity' => $quantity]
             );
 
-            // إضافة البيانات للمصفوفة التي ستتحول لـ JSON
             $requests[] = [
                 'user_id'    => $user->id,
                 'product_id' => $product->id,

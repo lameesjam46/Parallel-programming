@@ -12,88 +12,11 @@ use Illuminate\Support\Facades\Cache;
 
 class OrderController extends Controller
 {
-    // 1. حل مشكلة الـ Race Condition (Pessimistic Locking)
-public function checkout(Request $request)
-{
-    return DB::transaction(function () use ($request) {
-        $product = Product::where('id', $request->product_id)
-                          ->lockForUpdate()
-                          ->first();
-
-        if (!$product || $product->stock < $request->quantity) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Out of stock, sorry'
-            ], 422);
-        }
-
-        $product->decrement('stock', $request->quantity);
-
-        return response()->json([
-            'status'          => true,
-            'message'         => 'Purchase successful',
-            'remaining_stock' => $product->fresh()->stock,
-        ], 200);
-    });
-}
-public function checkoutWithSemaphore(Request $request)
-{
-    $semaphoreKey  = 'checkout_semaphore_count';
-    $maxConcurrent = 5;
-
-    $currentCount = (int) Cache::get($semaphoreKey, 0);
-
-    if ($currentCount >= $maxConcurrent) {
-        return response()->json([
-            'status'            => false,
-            'message'           => 'Server busy, please try again later',
-            'active_operations' => $currentCount,
-            'max_allowed'       => $maxConcurrent,
-        ], 503);
-    }
-
-    Cache::increment($semaphoreKey);
-
-    try {
-        return DB::transaction(function () use ($request) {
-            $product = Product::where('id', $request->product_id)
-                              ->lockForUpdate()
-                              ->first();
-
-            if (!$product || $product->stock < $request->quantity) {
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Out of stock',
-                ], 422);
-            }
-
-            $product->decrement('stock', $request->quantity);
-
-            return response()->json([
-                'status'          => true,
-                'message'         => 'Purchase successful',
-                'remaining_stock' => $product->fresh()->stock,
-            ], 200);
-        });
-
-    } finally {
-        Cache::decrement($semaphoreKey);
-    }
-}
+ 
 
 
 
 
-
-
-
-
-
-
-
-/**
-     * تتبع الكود غير المحمي
-     */
     public  function unprotectedCheckout(Request $request)
 {
     $user =User::find($request->user_id);
@@ -132,15 +55,11 @@ public function checkoutWithSemaphore(Request $request)
 
 
 
-/**
-     * تتبع الكود المحمي
-     */
     public function protectedCheckout(Request $request)
     {
         try {
             $user = User::findOrFail($request->user_id);
 
-            // المتطلب 8: استخدام المعاملات لضمان الذرية (Atomicity)
             return DB::transaction(function () use ($user) {
                 $cartItems = CartItem::where('user_id', $user->id)->get();
 
@@ -176,7 +95,6 @@ public function checkoutWithSemaphore(Request $request)
             });
 
         } catch (\Exception $e) {
-            // في حال الفشل، الـ Transaction ستقوم بعمل Rollback تلقائياً
             return response()->json(['error' => $e->getMessage()], 422);
         }
     }
@@ -228,4 +146,128 @@ public function checkoutWithSemaphore(Request $request)
             'items_processed' => count($cartItems)
         ]);
     }
+
+
+
+
+
+
+
+public function Checkout(Request $request)
+    {
+        $allRequests = $request->input('requests');
+          $index = Cache::increment('checkout_test_index') - 1;
+        if (!isset($allRequests[$index])) {
+            return response()->json(['message' => 'Done'], 200);
+        }
+        $data = $allRequests[$index];
+        try {
+            DB::transaction(function () use ($data) {
+                $product = Product::where('id', $data['product_id'])->lockForUpdate()->first();
+                $product->decrement('stock', $data['quantity']);
+                Order::create([
+                    'user_id' => $data['user_id'],
+                    'product_id' => $data['product_id'],
+                    'quantity' => $data['quantity'],
+                    'total_price' => $data['price'] * $data['quantity'],
+                    'method' => $data['method'],
+                    'confirmation_code' => 'TEST-' . Str::random(6),
+                    'status' => 'confirmed'
+                ]);
+                DB::table('cart_items')
+                ->where('user_id', $data['user_id'])
+                    ->where('product_id', $data['product_id'])
+                    ->delete();
+            });
+
+            return response()->json(['status' => 'success']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+    }
+
+
+
+
+
+
+
+
+
+    public function transactionDemo(Request $request)
+{
+    $mode = $request->query('mode', 'unsafe');
+    $user = User::find($request->user_id);
+    
+    if (!$user) {
+        return response()->json([
+            'message' => 'User not found'
+        ], 404);
+    }
+
+    try {
+        if ($mode === 'safe') {
+            DB::transaction(function () use ($user) {
+                $cartItems = CartItem::where('user_id', $user->id)->get();
+                foreach ($cartItems as $item) {
+                    $product = Product::find($item->product_id);
+                    
+                    if (!$product || $product->stock < $item->quantity) {
+                        throw new \Exception("المخزون غير كاف");
+                    }
+                    
+                    $product->decrement('stock', $item->quantity);
+                    
+                    throw new \Exception("فشل أثناء إنشاء الطلب");
+                    
+                    Order::create([
+                        'user_id' => $user->id,
+                        'product_id' => $product->id,
+                        'quantity' => $item->quantity,
+                        'total_price' => $product->price * $item->quantity,
+                        'method' => 'card',
+                        'confirmation_code' => 'CONF-' . \Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8)),
+                        'status' => 'confirmed'
+                    ]);
+                    $item->delete();
+                }
+        });
+        } else {
+            $cartItems = CartItem::where('user_id', $user->id)->get();
+            foreach ($cartItems as $item) {
+                $product = Product::find($item->product_id);
+                
+                if (!$product || $product->stock < $item->quantity) {
+                    return response()->json([
+                        'message' => 'المخزون غير كاف'
+                    ], 400);
+                }
+                
+                $product->decrement('stock', $item->quantity);
+                
+                throw new \Exception("فشل أثناء إنشاء الطلب");
+                
+                Order::create([
+                    'user_id' => $user->id,
+                    'product_id' => $product->id,
+                    'quantity' => $item->quantity,
+                    'total_price' => $product->price * $item->quantity,
+                    'method' => 'card',
+                    'confirmation_code' => 'CONF-' . \Illuminate\Support\Str::upper(\Illuminate\Support\Str::random(8)),
+                    'status' => 'confirmed'
+                ]);
+                $item->delete();
+            }
+        }
+    } catch (\Exception $e) {
+        return response()->json([
+            'mode' => $mode,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+
+    return response()->json([
+        'message' => 'Done'
+    ]);
+}
 }
